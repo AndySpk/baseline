@@ -110,4 +110,24 @@ log "Réseau configuré : $IP_ADDRESS → gateway $GATEWAY"
 read -p "Installer Webmin (interface web) ? [o/N] " webmin
 if [[ $webmin =~ ^[Oo]$ ]]; then
     log "6. Installation de Webmin..."
-    wget -O webmin-setup-repo.sh https://raw.githubusercontent.com/webmin/webmin
+    wget -O webmin-setup-repo.sh https://raw.githubusercontent.com/webmin/webmin/master/webmin-setup-repo.sh
+    chmod +x webmin-setup-repo.sh
+    ./webmin-setup-repo.sh
+    apt update
+    apt install -y webmin --install-recommends
+    log "Webmin installé → https://$(hostname -I | awk '{print $1}'):10000"
+fi
+
+# 7. Jeux BSD
+read -p "Installer les jeux BSD (tetris, adventure…) ? [O/n] " jeux
+[[ $jeux =~ ^[Nn]$ ]] || { apt install -y bsdgames; log "Jeux BSD installés"; }
+
+# 8. Nettoyage
+log "8. Nettoyage final..."
+apt autoremove -y && apt autoclean
+
+log "================================================================"
+log "  Baseline terminée avec succès !"
+log "  Log complet → $LOGFILE"
+log "  Redémarre avec : reboot"
+log "================================================================"
