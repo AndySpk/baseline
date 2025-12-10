@@ -1,94 +1,132 @@
-#!/bin/bash
-
-# ==========================================
-# BASELINE CLI DEBIAN 13 (V2 - Safe Mode)
-# ==========================================
-
-# 1. VÉRIFICATION ROOT
-if [[ $EUID -ne 0 ]]; then
-   echo "ERREUR: Ce script doit être lancé en tant que root." 
-   exit 1
+#!/usr/bin/env bash
+# ===============================================================
+# Auto-install curl si curl n'est pas présent
+# → permet de lancer le script même sur une Debian 13 toute fraîche sans rien
+# ===============================================================
+if ! command -v curl >/dev/null 2>&1; then
+    echo "curl non trouvé → installation automatique..."
+    apt-get update && apt-get install -y curl
 fi
 
-# 2. PRÉ-REQUIS IMMÉDIATS
-echo ">>> Installation des pré-requis..."
-export DEBIAN_FRONTEND=noninteractive
-apt update -q
-apt install -y -q curl wget
+# ===============================================================
+# Baseline CLI Debian 13 (Trixie) - Version définitive avec auto-curl
+# Repo : https://github.com/AndySpk/debian-baseline
+# Auteur : AndySpk + Grok
+# ===============================================================
 
-# Couleurs
-BLUE='\033[0;34m'
-GREEN='\033[0;32m'
-NC='\033[0m'
+set -euo pipefail
 
-echo -e "${BLUE}>>> Démarrage de la Baseline CLI Debian 13...${NC}"
+LOGFILE="/var/log/baseline_debian_cli.log"
+exec > >(tee -a "$LOGFILE") 2>&1
 
-# -----------------------------------------------------------------
-# 3. MISE A JOUR & OUTILS
-# -----------------------------------------------------------------
-echo -e "${GREEN}[1/6] Mise à jour et installation des outils...${NC}"
-# On évite les prompts interactifs
-apt upgrade -y -q
+echo "================================================================"
+echo "  Début de la baseline CLI Debian - $(date)"
+echo "================================================================"
 
-TOOLS="ssh zip unzip nmap locate ncdu git screen dnsutils net-tools sudo lynx"
-apt install -y -q $TOOLS
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+}
 
-echo "Mise à jour de l'index locate..."
-updatedb
+# Vérification root
+[[ $EUID -eq 0 ]] || { echo "Ce script doit être exécuté en root"; exit 1; }
 
-# -----------------------------------------------------------------
-# 4. NETBIOS / SAMBA
-# -----------------------------------------------------------------
-echo -e "${GREEN}[2/6] Installation Samba...${NC}"
-apt install -y -q winbind samba
+# 1. Mise à jour complète
+log "1. Mise à jour complète du système..."
+apt update && apt full-upgrade -y
 
-# Backup et Config
-cp /etc/nsswitch.conf /etc/nsswitch.conf.bak
-if grep -q "wins" /etc/nsswitch.conf; then
-    echo "WINS déjà configuré."
+# 2. Paquets essentiels
+log "2. Installation des paquets essentiels..."
+apt install -y --no-install-recommends \
+    openssh-server zip unzip nmap locate ncdu curl git screen dnsutils \
+    net-tools sudo lynx ca-certificates bash-completion ipcalc
+
+updatedb &>/dev/null || true
+log "Paquets installés + base locate mise à jour"
+
+# 3. NetBIOS (optionnel)
+read -p "Installer winbind/samba pour résolution NetBIOS (réseaux locaux uniquement) ? [o/N] " netbios
+if [[ $netbios =~ ^[Oo]$ ]]; then
+    log "3. Installation winbind + samba"
+    apt install -y winbind samba
+    sed -i '/^hosts:/ s/$/ wins/' /etc/nsswitch.conf
+    log "NetBIOS activé"
 else
-    echo "Activation WINS..."
-    sed -i 's/^hosts:          files dns/hosts:          files dns wins/' /etc/nsswitch.conf
+    log "3. NetBIOS désactivé"
 fi
 
-# -----------------------------------------------------------------
-# 5. PERSONNALISATION BASH
-# -----------------------------------------------------------------
-echo -e "${GREEN}[3/6] Activation couleurs .bashrc...${NC}"
-sed -i "s/# export LS_OPTIONS='--color=auto'/export LS_OPTIONS='--color=auto'/g" /root/.bashrc
-sed -i 's/# eval "`dircolors`"/eval "`dircolors`"/g' /root/.bashrc
-sed -i "s/# alias ls='ls \$LS_OPTIONS'/alias ls='ls \$LS_OPTIONS'/g" /root/.bashrc
-sed -i "s/# alias ll='ls \$LS_OPTIONS -l'/alias ll='ls \$LS_OPTIONS -l'/g" /root/.bashrc
-sed -i "s/# alias l='ls \$LS_OPTIONS -lA'/alias l='ls \$LS_OPTIONS -lA'/g" /root/.bashrc
+# 4. Personnalisation .bashrc root
+log "4. Activation alias/couleurs dans /root/.bashrc"
+sed -i '9,13s/^#//' /root/.bashrc
+source /root/.bashrc 2>/dev/null || true
 
-# -----------------------------------------------------------------
-# 6. WEBMIN
-# -----------------------------------------------------------------
-echo -e "${GREEN}[4/6] Installation Webmin...${NC}"
-curl -o webmin-setup-repo.sh https://raw.githubusercontent.com/webmin/webmin/master/webmin-setup-repo.sh
-chmod +x webmin-setup-repo.sh
-./webmin-setup-repo.sh > /dev/null 2>&1
-apt install -y -q webmin --install-recommends
-rm webmin-setup-repo.sh
+# 5. Configuration réseau IP fixe
+log "5. Configuration réseau en IP fixe"
+echo
+ip -br link show
+echo
+read -p "Nom de l'interface (ex: ens18, enp0s3) : " INTERFACE
+read -p "Adresse IP avec CIDR (ex: 192.168.1.50/24) : " IP_ADDRESS
+read -p "Passerelle par défaut : " GATEWAY
+read -p "DNS principal (ex: 1.1.1.1) : " DNS_SERVER
+read -p "Domaine de recherche (facultatif) : " SEARCH_DOMAIN
+read -p "Hostname de la machine : " HOSTNAME
 
-# -----------------------------------------------------------------
-# 7. BONUS
-# -----------------------------------------------------------------
-echo -e "${GREEN}[5/6] Installation Jeux...${NC}"
-apt install -y -q bsdgames
+NETMASK=$(ipcalc "$IP_ADDRESS" | grep Netmask | awk '{print $4}')
 
-# -----------------------------------------------------------------
-# 8. CONFIGURATION RÉSEAU (Mode Echo Simple)
-# -----------------------------------------------------------------
-echo -e "${GREEN}[6/6] Terminé !${NC}"
-echo "----------------------------------------------------"
-echo "MODELE A COPIER DANS /etc/network/interfaces :"
-echo ""
-echo "# IP FIXE (Exemple)"
-echo "auto ens33"
-echo "iface ens33 inet static"
-echo "    address 192.168.1.50/24"
-echo "    gateway 192.168.1.1"
-echo "    # dns-nameservers 1.1.1.1 8.8.8.8"
-echo "----------------------------------------------------"
-echo "Webmin : https://$(hostname -I | awk '{print $1}'):10000"
+cp /etc/network/interfaces /etc/network/interfaces.bak.$(date +%s) 2>/dev/null || true
+
+cat > /etc/network/interfaces << EOF
+source /etc/network/interfaces.d/*
+
+auto lo
+iface lo inet loopback
+
+auto $INTERFACE
+iface $INTERFACE inet static
+    address ${IP_ADDRESS%/*}
+    netmask $NETMASK
+    gateway $GATEWAY
+EOF
+
+cat > /etc/resolv.conf << EOF
+nameserver $DNS_SERVER
+${SEARCH_DOMAIN:+search $SEARCH_DOMAIN}
+EOF
+
+echo "$HOSTNAME" > /etc/hostname
+hostnamectl set-hostname "$HOSTNAME"
+
+if command -v ifup >/dev/null 2>&1; then
+    ifdown "$INTERFACE" || true
+    ifup "$INTERFACE"
+else
+    systemctl restart systemd-networkd || true
+fi
+
+log "Réseau configuré : $IP_ADDRESS → gateway $GATEWAY"
+
+# 6. Webmin
+read -p "Installer Webmin (interface web) ? [o/N] " webmin
+if [[ $webmin =~ ^[Oo]$ ]]; then
+    log "6. Installation de Webmin..."
+    wget -O webmin-setup-repo.sh https://raw.githubusercontent.com/webmin/webmin/master/webmin-setup-repo.sh
+    chmod +x webmin-setup-repo.sh
+    ./webmin-setup-repo.sh
+    apt update
+    apt install -y webmin --install-recommends
+    log "Webmin installé → https://$(hostname -I | awk '{print $1}'):10000"
+fi
+
+# 7. Jeux BSD
+read -p "Installer les jeux BSD (tetris, adventure…) ? [O/n] " jeux
+[[ $jeux =~ ^[Nn]$ ]] || { apt install -y bsdgames; log "Jeux BSD installés"; }
+
+# 8. Nettoyage
+log "8. Nettoyage final..."
+apt autoremove -y && apt autoclean
+
+log "================================================================"
+log "  Baseline terminée avec succès !"
+log "  Log complet → $LOGFILE"
+log "  Redémarre avec : reboot"
+log "================================================================"
