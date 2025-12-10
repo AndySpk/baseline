@@ -75,7 +75,7 @@ NETMASK=$(ipcalc "$IP_ADDRESS" | grep Netmask | awk '{print $4}')
 
 cp /etc/network/interfaces /etc/network/interfaces.bak.$(date +%s) 2>/dev/null || true
 
-cat > /etc/network/interfaces << EOF
+cat > /etc/network/interfaces << 'EOF'
 source /etc/network/interfaces.d/*
 
 auto lo
@@ -88,7 +88,7 @@ iface $INTERFACE inet static
     gateway $GATEWAY
 EOF
 
-cat > /etc/resolv.conf << EOF
+cat > /etc/resolv.conf << 'EOF'
 nameserver $DNS_SERVER
 ${SEARCH_DOMAIN:+search $SEARCH_DOMAIN}
 EOF
@@ -100,6 +100,7 @@ if command -v ifup >/dev/null 2>&1; then
     ifdown "$INTERFACE" || true
     ifup "$INTERFACE"
 else
+else
     systemctl restart systemd-networkd || true
 fi
 
@@ -109,24 +110,4 @@ log "Réseau configuré : $IP_ADDRESS → gateway $GATEWAY"
 read -p "Installer Webmin (interface web) ? [o/N] " webmin
 if [[ $webmin =~ ^[Oo]$ ]]; then
     log "6. Installation de Webmin..."
-    wget -O webmin-setup-repo.sh https://raw.githubusercontent.com/webmin/webmin/master/webmin-setup-repo.sh
-    chmod +x webmin-setup-repo.sh
-    ./webmin-setup-repo.sh
-    apt update
-    apt install -y webmin --install-recommends
-    log "Webmin installé → https://$(hostname -I | awk '{print $1}'):10000"
-fi
-
-# 7. Jeux BSD
-read -p "Installer les jeux BSD (tetris, adventure…) ? [O/n] " jeux
-[[ $jeux =~ ^[Nn]$ ]] || { apt install -y bsdgames; log "Jeux BSD installés"; }
-
-# 8. Nettoyage
-log "8. Nettoyage final..."
-apt autoremove -y && apt autoclean
-
-log "================================================================"
-log "  Baseline terminée avec succès !"
-log "  Log complet → $LOGFILE"
-log "  Redémarre avec : reboot"
-log "================================================================"
+    wget -O webmin-setup-repo.sh https://raw.githubusercontent.com/webmin/webmin
